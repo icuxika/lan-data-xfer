@@ -102,10 +102,42 @@ class PeerConnectionHandler {
         this.onmessageFunc = callback;
     }
 
-    async sendText(data: string) {
+    sendText(data: string) {
         if (this.dataChannel) {
             this.dataChannel.send(data);
         }
+    }
+
+    sendBlob(data: ArrayBuffer) {
+        if (this.dataChannel) {
+            this.dataChannel.send(data);
+        }
+    }
+
+    bufferedAmountLow() {
+        const bufferedAmountLowThreshold = 1024 * 64;
+        return new Promise<void>((resolve) => {
+            if (this.dataChannel) {
+                if (
+                    this.dataChannel.bufferedAmount > bufferedAmountLowThreshold
+                ) {
+                    const handleBufferedAmountLow = () => {
+                        this.dataChannel?.removeEventListener(
+                            "bufferedamountlow",
+                            handleBufferedAmountLow
+                        );
+                        resolve();
+                    };
+                    this.dataChannel.addEventListener(
+                        "bufferedamountlow",
+                        handleBufferedAmountLow
+                    );
+                    //
+                } else {
+                    resolve();
+                }
+            }
+        });
     }
 }
 

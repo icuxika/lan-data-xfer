@@ -12,7 +12,7 @@ import vueEslintParser from "vue-eslint-parser";
 export default [
     {
         // 忽略特定目录下的文件，这些目录通常包含第三方代码或配置
-        ignores: ["node_modules/", "docker/", "public/"],
+        ignores: ["node_modules/", "docker/", "public/", "dist/"],
     },
     {
         // 指定需要检查的JavaScript和TypeScript文件路径模式
