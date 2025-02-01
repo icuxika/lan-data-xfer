@@ -28,9 +28,14 @@ interface Message {
 class PeerConnectionHandler {
     pc?: RTCPeerConnection;
     dataChannel?: RTCDataChannel;
+    machineId: number;
+    constructor(machineId: number) {
+        this.machineId = machineId;
+    }
 
     onicecandidateFunc: (event: RTCPeerConnectionIceEvent) => void = () => {};
-    onmessageFunc: (event: MessageEvent) => void = () => {};
+    onmessageFunc: (event: MessageEvent, machineId: number) => void = () => {};
+    onopenFunc: (event: Event, machineId: number) => void = () => {};
     async initRTCPeerConnection(configuration: RTCConfiguration = {}) {
         this.pc = new RTCPeerConnection(configuration);
         this.pc.onicecandidate = (event: RTCPeerConnectionIceEvent) => {
@@ -59,14 +64,15 @@ class PeerConnectionHandler {
 
     initRTCDataChannelEvents() {
         if (this.dataChannel) {
-            this.dataChannel.onopen = () => {
+            this.dataChannel.onopen = (event: Event) => {
                 console.log("Data channel is open");
+                this.onopenFunc(event, this.machineId);
             };
             this.dataChannel.onclose = () => {
                 console.log("Data channel is closed");
             };
             this.dataChannel.onmessage = (event: MessageEvent) => {
-                this.onmessageFunc(event);
+                this.onmessageFunc(event, this.machineId);
             };
         }
     }
@@ -98,7 +104,11 @@ class PeerConnectionHandler {
         this.onicecandidateFunc = callback;
     }
 
-    onmessage(callback: (event: MessageEvent) => void) {
+    onopen(callback: (event: Event, machineId: number) => void) {
+        this.onopenFunc = callback;
+    }
+
+    onmessage(callback: (event: MessageEvent, machineId: number) => void) {
         this.onmessageFunc = callback;
     }
 
