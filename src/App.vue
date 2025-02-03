@@ -245,6 +245,7 @@ const handleMachineClick = async (machine: MachineInfo) => {
     }
 };
 const refreshMachines = async (machines: MachineInfo[]) => {
+    machineList.value = [];
     if (machines.length === 0) {
         return;
     }
@@ -253,7 +254,7 @@ const refreshMachines = async (machines: MachineInfo[]) => {
         const contentWidth = rect.width;
         const contentHeight = rect.height;
         const machinesNumber = machines.length;
-        const radius = 280;
+        const radius = (Math.min(contentWidth, contentHeight) / 2) * 0.8;
         for (let i = 0; i < machinesNumber; i++) {
             const angle = i * ((2 * Math.PI) / machinesNumber);
             const x = Math.cos(angle) * radius + contentWidth / 2;
