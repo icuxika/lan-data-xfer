@@ -1,20 +1,94 @@
+enum MessageType {
+    /**
+     * 建立连接
+     */
+    AFTER_CONNECTION_ESTABLISHED = 0,
+    /**
+     * 更新在线用户列表
+     */
+    UPDATE_ONLINE_USER = 1,
+    /**
+     * 发送本地描述
+     */
+    SEND_LOCAL_DESCRIPTION = 11,
+    /**
+     * 接收本地描述
+     */
+    RECEIVE_LOCAL_DESCRIPTION = 12,
+    /**
+     * 传递 ICE 候选者
+     */
+    SEND_CANDIDATE = 13,
+}
+
+type SignalingChannelOptions = {
+    reconnectInterval?: number;
+    reconnectAttempts?: number;
+    onMessage?: (event: MessageEvent) => void;
+    onOpen?: (event: Event) => void;
+    onError?: (event: Event) => void;
+    onClose?: (event: CloseEvent) => void;
+};
+
 class SignalingChannel {
-    socket: WebSocket;
+    socket: WebSocket | null;
     url: string;
-    onmessageFunc: (event: MessageEvent) => void = () => {};
-    constructor(url: string) {
+    options: SignalingChannelOptions;
+    reconnectInterval: number;
+    reconnectAttempts: number;
+    reconnectCount: number;
+    onOpen: (event: Event) => void;
+    onMessage: (event: MessageEvent) => void;
+    onError: (event: Event) => void;
+    onClose: (event: CloseEvent) => void;
+    constructor(url: string, options: SignalingChannelOptions) {
+        this.socket = null;
         this.url = url;
-        this.socket = new WebSocket(url);
+        this.options = options;
+        this.reconnectInterval = options.reconnectInterval || 5000;
+        this.reconnectAttempts = options.reconnectAttempts || 3;
+        this.reconnectCount = 0;
+        this.onOpen = options.onOpen || (() => {});
+        this.onMessage = options.onMessage || (() => {});
+        this.onError = options.onError || (() => {});
+        this.onClose = options.onClose || (() => {});
+
+        this.connect();
+    }
+
+    connect() {
+        this.socket = new WebSocket(this.url);
+        this.socket.onopen = () => {
+            this.reconnectCount = 0;
+        };
         this.socket.onmessage = (event: MessageEvent) => {
-            this.onmessageFunc(event);
+            this.onMessage(event);
+        };
+        this.socket.onclose = (event: CloseEvent) => {
+            this.onClose(event);
+            if (this.reconnectCount < this.reconnectAttempts) {
+                setTimeout(() => {
+                    this.reconnectCount++;
+                    this.connect();
+                }, this.reconnectInterval);
+            }
+        };
+        this.socket.onerror = (event: Event) => {
+            this.onError(event);
+            this.socket?.close();
         };
     }
-    onmessage(callback: (event: MessageEvent) => void) {
-        this.onmessageFunc = callback;
+
+    send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
+        if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+            this.socket.send(data);
+        } else {
+            console.error("WebSocket is not open.");
+        }
     }
 
     close() {
-        this.socket.close();
+        this.socket?.close();
     }
 }
 
@@ -22,24 +96,35 @@ interface Message {
     senderId: number;
     receiverId: number;
     content: string;
-    type: number;
+    type: MessageType;
 }
 
+type PeerConnectionHandlerOptions = {
+    onOpen?: (event: Event, machineId: number) => void;
+    onIceCandidate?: (event: RTCPeerConnectionIceEvent) => void;
+    onMessage?: (event: MessageEvent, machineId: number) => void;
+};
+
 class PeerConnectionHandler {
-    pc?: RTCPeerConnection;
-    dataChannel?: RTCDataChannel;
+    pc: RTCPeerConnection | null;
+    dataChannel: RTCDataChannel | null;
     machineId: number;
-    constructor(machineId: number) {
+    onOpen: (event: Event, machineId: number) => void;
+    onIceCandidate: (event: RTCPeerConnectionIceEvent) => void;
+    onMessage: (event: MessageEvent, machineId: number) => void;
+    constructor(machineId: number, options: PeerConnectionHandlerOptions) {
+        this.pc = null;
+        this.dataChannel = null;
         this.machineId = machineId;
+        this.onOpen = options.onOpen || (() => {});
+        this.onIceCandidate = options.onIceCandidate || (() => {});
+        this.onMessage = options.onMessage || (() => {});
     }
 
-    onicecandidateFunc: (event: RTCPeerConnectionIceEvent) => void = () => {};
-    onmessageFunc: (event: MessageEvent, machineId: number) => void = () => {};
-    onopenFunc: (event: Event, machineId: number) => void = () => {};
     async initRTCPeerConnection(configuration: RTCConfiguration = {}) {
         this.pc = new RTCPeerConnection(configuration);
         this.pc.onicecandidate = (event: RTCPeerConnectionIceEvent) => {
-            this.onicecandidateFunc(event);
+            this.onIceCandidate(event);
         };
     }
 
@@ -65,14 +150,14 @@ class PeerConnectionHandler {
     initRTCDataChannelEvents() {
         if (this.dataChannel) {
             this.dataChannel.onopen = (event: Event) => {
-                console.log("Data channel is open");
-                this.onopenFunc(event, this.machineId);
+                console.log(`与[${this.machineId}]之间的数据通道已经打开`);
+                this.onOpen(event, this.machineId);
             };
             this.dataChannel.onclose = () => {
-                console.log("Data channel is closed");
+                console.log(`与[${this.machineId}]之间的数据通道已经关闭`);
             };
             this.dataChannel.onmessage = (event: MessageEvent) => {
-                this.onmessageFunc(event, this.machineId);
+                this.onMessage(event, this.machineId);
             };
         }
     }
@@ -98,18 +183,6 @@ class PeerConnectionHandler {
         if (this.pc) {
             this.pc.addIceCandidate(candidate);
         }
-    }
-
-    onicecandidate(callback: (event: RTCPeerConnectionIceEvent) => void) {
-        this.onicecandidateFunc = callback;
-    }
-
-    onopen(callback: (event: Event, machineId: number) => void) {
-        this.onopenFunc = callback;
-    }
-
-    onmessage(callback: (event: MessageEvent, machineId: number) => void) {
-        this.onmessageFunc = callback;
     }
 
     sendText(data: string) {
@@ -151,5 +224,5 @@ class PeerConnectionHandler {
     }
 }
 
-export { PeerConnectionHandler, SignalingChannel };
+export { MessageType, PeerConnectionHandler, SignalingChannel };
 export type { Message };

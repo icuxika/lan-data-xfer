@@ -2,6 +2,7 @@
 import { useFile } from "@/hooks/use-file";
 import { onMounted, onUnmounted, ref, useTemplateRef } from "vue";
 import {
+    MessageType,
     PeerConnectionHandler,
     SignalingChannel,
     type Message,
@@ -17,35 +18,36 @@ const map: {
 } = {};
 
 const connectMachine = async (selectedUserId: number) => {
-    const peerConnectionHandler = new PeerConnectionHandler(selectedUserId);
+    const peerConnectionHandler = new PeerConnectionHandler(selectedUserId, {
+        onOpen: (event, machineId) => {
+            onopen(event, machineId);
+        },
+        onIceCandidate: (event) => {
+            if (event.candidate) {
+                const msg: Message = {
+                    senderId: currentUserId.value,
+                    receiverId: selectedUserId,
+                    content: JSON.stringify(event.candidate),
+                    type: MessageType.SEND_CANDIDATE,
+                };
+                signalingChannel.send(JSON.stringify(msg));
+            }
+        },
+        onMessage: (event, machineId) => {
+            onmessage(event, machineId);
+        },
+    });
     map[selectedUserId] = peerConnectionHandler;
-    peerConnectionHandler.onicecandidate((event) => {
-        if (event.candidate) {
-            const msg: Message = {
-                senderId: currentUserId.value,
-                receiverId: selectedUserId,
-                content: JSON.stringify(event.candidate),
-                type: 13,
-            };
-            signalingChannel.socket.send(JSON.stringify(msg));
-        }
-    });
     await peerConnectionHandler.initRTCPeerConnection();
-    peerConnectionHandler.onopen((event, machineId) => {
-        onopen(event, machineId);
-    });
-    peerConnectionHandler.onmessage((event, machineId) => {
-        onmessage(event, machineId);
-    });
     await peerConnectionHandler.createDataChannel();
     await peerConnectionHandler.sendDescription((description) => {
         const message: Message = {
             senderId: currentUserId.value,
             receiverId: selectedUserId,
             content: JSON.stringify(description),
-            type: 11,
+            type: MessageType.SEND_LOCAL_DESCRIPTION,
         };
-        signalingChannel.socket.send(JSON.stringify(message));
+        signalingChannel.send(JSON.stringify(message));
     });
 };
 const input = ref<string>("");
@@ -273,108 +275,167 @@ const refreshMachines = async (machines: MachineInfo[]) => {
     }
 };
 
-onMounted(() => {
-    console.log(navigator.userAgent);
-    signalingChannel = new SignalingChannel(
-        `${import.meta.env.VITE_SIGNALING_SERVER_URL}?token=abc&clientType=1&userId=1`
-    );
-    signalingChannel.onmessage(async (event) => {
-        const message: Message = JSON.parse(event.data);
-        switch (message.type) {
-            case 0: {
-                currentUserId.value = message.receiverId;
-                refreshMachines(
-                    (JSON.parse(message.content) as number[])
-                        .filter((p) => p != currentUserId.value)
-                        .map((id) => {
-                            return {
-                                id,
-                                text: "",
-                                type: 0,
-                                left: "",
-                                top: "",
-                                connected: false,
-                                messageList: [],
-                            };
-                        })
-                );
-                console.log(
-                    `与信令服务器建立连接，得到分配的用户id为${message.receiverId}`
-                );
-                break;
-            }
-            case 1: {
-                refreshMachines(
-                    (JSON.parse(message.content) as number[])
-                        .filter((p) => p != currentUserId.value)
-                        .map((id) => {
-                            return {
-                                id,
-                                text: "",
-                                type: 0,
-                                left: "",
-                                top: "",
-                                connected: false,
-                                messageList: [],
-                            };
-                        })
-                );
-                console.log(`在线用户列表已更新`);
-                break;
-            }
-            case 11: {
-                const description = JSON.parse(message.content);
+const currentDevice = ref("");
+enum DeviceType {
+    DESKTOP,
+    PHONE,
+    TABLET,
+    UNKNOWN,
+}
 
-                const peerConnectionHandler = new PeerConnectionHandler(
-                    message.senderId
-                );
-                map[message.senderId] = peerConnectionHandler;
-                peerConnectionHandler.onicecandidate((event) => {
-                    if (event.candidate) {
-                        const msg: Message = {
-                            senderId: currentUserId.value,
-                            receiverId: message.senderId,
-                            content: JSON.stringify(event.candidate),
-                            type: 13,
-                        };
-                        signalingChannel.socket.send(JSON.stringify(msg));
-                    }
-                });
-                await peerConnectionHandler.initRTCPeerConnection();
-                peerConnectionHandler.onopen((event, machineId) => {
-                    onopen(event, machineId);
-                });
-                peerConnectionHandler.onmessage((event, machineId) => {
-                    onmessage(event, machineId);
-                });
-                await peerConnectionHandler.initOnDataChannel();
-                await peerConnectionHandler.receiveDescription(description);
-                await peerConnectionHandler.sendDescription((description) => {
-                    const msg: Message = {
-                        senderId: currentUserId.value,
-                        receiverId: message.senderId,
-                        content: JSON.stringify(description),
-                        type: 12,
-                    };
-                    signalingChannel.socket.send(JSON.stringify(msg));
-                });
-                break;
-            }
-            case 12: {
-                const description = JSON.parse(message.content);
-                await map[message.senderId].receiveDescription(description);
-                break;
-            }
-            case 13: {
-                const candidate = JSON.parse(message.content);
-                await map[message.senderId].addIceCandidate(candidate);
-                break;
-            }
-            default: {
-                //
-            }
+const getDeviceType = (): DeviceType => {
+    let userAgent = navigator.userAgent;
+    if (
+        /Mobile|Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+            userAgent
+        )
+    ) {
+        if (/iPad/i.test(userAgent)) {
+            return DeviceType.TABLET;
         }
-    });
+        return DeviceType.PHONE;
+    } else if (/Windows NT|Macintosh|Linux/i.test(userAgent)) {
+        return DeviceType.DESKTOP;
+    } else {
+        return DeviceType.UNKNOWN;
+    }
+};
+
+onMounted(() => {
+    const deviceType = getDeviceType();
+    switch (deviceType) {
+        case DeviceType.DESKTOP: {
+            currentDevice.value = "桌面";
+            break;
+        }
+        case DeviceType.PHONE: {
+            currentDevice.value = "手机";
+            break;
+        }
+        case DeviceType.TABLET: {
+            currentDevice.value = "平板";
+            break;
+        }
+        case DeviceType.UNKNOWN: {
+            currentDevice.value = "未知";
+            break;
+        }
+    }
+
+    signalingChannel = new SignalingChannel(
+        `${import.meta.env.VITE_SIGNALING_SERVER_URL}?token=abc&clientType=1&userId=1`,
+        {
+            onMessage: async (event) => {
+                const message: Message = JSON.parse(event.data);
+                switch (message.type) {
+                    case MessageType.AFTER_CONNECTION_ESTABLISHED: {
+                        currentUserId.value = message.receiverId;
+                        refreshMachines(
+                            (JSON.parse(message.content) as number[])
+                                .filter((p) => p != currentUserId.value)
+                                .map((id) => {
+                                    return {
+                                        id,
+                                        text: "",
+                                        type: 0,
+                                        left: "",
+                                        top: "",
+                                        connected: false,
+                                        messageList: [],
+                                    };
+                                })
+                        );
+                        console.log(
+                            `与信令服务器建立连接，得到分配的用户id为${message.receiverId}`
+                        );
+                        break;
+                    }
+                    case MessageType.UPDATE_ONLINE_USER: {
+                        refreshMachines(
+                            (JSON.parse(message.content) as number[])
+                                .filter((p) => p != currentUserId.value)
+                                .map((id) => {
+                                    return {
+                                        id,
+                                        text: "",
+                                        type: 0,
+                                        left: "",
+                                        top: "",
+                                        connected: false,
+                                        messageList: [],
+                                    };
+                                })
+                        );
+                        console.log(`在线用户列表已更新`);
+                        break;
+                    }
+                    case MessageType.SEND_LOCAL_DESCRIPTION: {
+                        const description = JSON.parse(message.content);
+
+                        const peerConnectionHandler = new PeerConnectionHandler(
+                            message.senderId,
+                            {
+                                onOpen: (event, machineId) => {
+                                    onopen(event, machineId);
+                                },
+                                onIceCandidate: (event) => {
+                                    if (event.candidate) {
+                                        const msg: Message = {
+                                            senderId: currentUserId.value,
+                                            receiverId: message.senderId,
+                                            content: JSON.stringify(
+                                                event.candidate
+                                            ),
+                                            type: MessageType.SEND_CANDIDATE,
+                                        };
+                                        signalingChannel.send(
+                                            JSON.stringify(msg)
+                                        );
+                                    }
+                                },
+                                onMessage: (event, machineId) => {
+                                    onmessage(event, machineId);
+                                },
+                            }
+                        );
+                        map[message.senderId] = peerConnectionHandler;
+                        await peerConnectionHandler.initRTCPeerConnection();
+                        await peerConnectionHandler.initOnDataChannel();
+                        await peerConnectionHandler.receiveDescription(
+                            description
+                        );
+                        await peerConnectionHandler.sendDescription(
+                            (description) => {
+                                const msg: Message = {
+                                    senderId: currentUserId.value,
+                                    receiverId: message.senderId,
+                                    content: JSON.stringify(description),
+                                    type: MessageType.RECEIVE_LOCAL_DESCRIPTION,
+                                };
+                                signalingChannel.send(JSON.stringify(msg));
+                            }
+                        );
+                        break;
+                    }
+                    case MessageType.RECEIVE_LOCAL_DESCRIPTION: {
+                        const description = JSON.parse(message.content);
+                        await map[message.senderId].receiveDescription(
+                            description
+                        );
+                        break;
+                    }
+                    case MessageType.SEND_CANDIDATE: {
+                        const candidate = JSON.parse(message.content);
+                        await map[message.senderId].addIceCandidate(candidate);
+                        break;
+                    }
+                    default: {
+                        //
+                    }
+                }
+            },
+        }
+    );
 });
 onUnmounted(() => {
     if (signalingChannel) {
@@ -400,6 +461,7 @@ onUnmounted(() => {
                     点击设备建立连接后，对应的绿色圆形会开始产生波纹，此时再次点击则会弹出对话框
                 </li>
             </ul>
+            <h3>当前设备: {{ currentDevice }}</h3>
         </div>
         <div
             style="
