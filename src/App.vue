@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useFile } from "@/hooks/use-file";
+import { UAParser } from "ua-parser-js";
 import { onMounted, onUnmounted, ref, useTemplateRef } from "vue";
 import {
     MessageType,
@@ -321,6 +322,8 @@ onMounted(() => {
             break;
         }
     }
+    const { os } = UAParser(navigator.userAgent);
+    currentDevice.value += `(${os.name})`;
 
     signalingChannel = new SignalingChannel(
         `${import.meta.env.VITE_SIGNALING_SERVER_URL}?token=abc&clientType=1&userId=1`,
